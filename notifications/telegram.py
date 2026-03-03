@@ -1,13 +1,14 @@
 """
 Telegram notification layer for the Local AI Job Search Agent.
-Sends instant alerts for 100% matches and a daily digest for 75%+ matches
+Sends instant alerts for matches >= MATCH_THRESHOLD (default 50%) and a daily digest for 50%+ matches
 via the Telegram Bot API. Implements cooldown to avoid duplicate alerts.
 """
 
 import logging
 import time
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
 import requests
 
@@ -23,22 +24,44 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 # HTTP request timeout
 REQUEST_TIMEOUT_SECONDS = 10
 
+# Submission history log (project root / logs / telegram_submissions.log)
+_SUBMISSIONS_LOG = Path(__file__).resolve().parent.parent / "logs" / "telegram_submissions.log"
 
-def _send_message(text: str) -> bool:
+
+def _log_submission(chat_id: str, message_type: str, success: bool, detail: Optional[str] = None) -> None:
+    """Append one line to logs/telegram_submissions.log for submission history."""
+    try:
+        _SUBMISSIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = "OK" if success else "FAIL"
+        line = f"{ts} | chat_id={chat_id} | type={message_type} | {status}"
+        if detail:
+            line += f" | {detail}"
+        line += "\n"
+        with open(_SUBMISSIONS_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        logger.warning("Could not write submission log: %s", e)
+
+
+def _send_message(text: str, message_type: str = "send") -> bool:
     """
     Send a single message to the configured Telegram chat. Truncates to 4096 chars.
     Does not enforce cooldown; caller must check before sending instant alerts.
+    Logs each attempt to logs/telegram_submissions.log for submission history.
 
     Args:
         text: Message body (HTML or plain). Will be truncated if over limit.
+        message_type: Label for submission log (e.g. "test", "instant", "digest").
 
     Returns:
         True if the API returned success, False otherwise.
     """
     token = config.config["TELEGRAM_BOT_TOKEN"]
-    chat_id = config.config["TELEGRAM_CHAT_ID"]
+    chat_id = str(config.config["TELEGRAM_CHAT_ID"]).strip()
     if not token or not chat_id:
         logger.warning("Telegram not configured; skip send")
+        _log_submission(chat_id or "(empty)", message_type, False, "not configured")
         return False
     if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
         text = text[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
@@ -47,9 +70,19 @@ def _send_message(text: str) -> bool:
     try:
         resp = requests.post(url, json=payload, timeout=REQUEST_TIMEOUT_SECONDS)
         resp.raise_for_status()
+        _log_submission(chat_id, message_type, True)
         return True
     except requests.RequestException as e:
+        detail = str(e)
+        try:
+            if hasattr(e, "response") and e.response is not None:
+                body = e.response.text
+                if body:
+                    detail = f"{e.response.status_code} {body}"
+        except Exception:
+            pass
         logger.error("Telegram send failed: %s", e)
+        _log_submission(chat_id, message_type, False, detail)
         return False
 
 
@@ -75,11 +108,11 @@ def _recently_notified(job_id: int) -> bool:
 
 def send_instant_alert(job: dict[str, Any]) -> bool:
     """
-    Send an instant Telegram alert for a 100% match. Respects cooldown per job_id.
-    Message includes title, company, location, salary, url, source.
+    Send an instant Telegram alert when match score >= MATCH_THRESHOLD. Respects cooldown per job_id.
+    Message includes score, title, company, location, salary, url, source.
 
     Args:
-        job: Job dict with id, title, company, location, url, salary_min, salary_max, source.
+        job: Job dict with id, title, company, location, url, salary_min, salary_max, source, match_score.
 
     Returns:
         True if message was sent successfully, False otherwise.
@@ -88,6 +121,7 @@ def send_instant_alert(job: dict[str, Any]) -> bool:
     if job_id is not None and _recently_notified(job_id):
         logger.debug("Skip instant alert for job_id=%s (cooldown)", job_id)
         return False
+    score_pct = int((job.get("match_score") or 0) * 100)
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     salary_str = "N/A"
@@ -109,7 +143,7 @@ def send_instant_alert(job: dict[str, Any]) -> bool:
     url = job.get("url") or ""
     source = (job.get("source") or "").replace("<", "&lt;").replace(">", "&gt;")
     text = (
-        "🎯 <b>100% Match Found!</b>\n\n"
+        f"🎯 <b>{score_pct}% Match Found!</b>\n\n"
         f"💼 {title}\n"
         f"🏢 {company}\n"
         f"📍 {location}\n"
@@ -117,7 +151,7 @@ def send_instant_alert(job: dict[str, Any]) -> bool:
         f"🔗 {url}\n\n"
         f"Source: {source}"
     )
-    if _send_message(text):
+    if _send_message(text, "instant"):
         if job_id is not None:
             db_mark_notified(job_id, "instant")
         return True
@@ -126,7 +160,7 @@ def send_instant_alert(job: dict[str, Any]) -> bool:
 
 def send_digest(jobs: list[dict[str, Any]]) -> bool:
     """
-    Send the daily digest of jobs (score >= 0.75, not yet in digest).
+    Send the daily digest of jobs (score >= configured DIGEST_THRESHOLD, not yet in digest).
     Marks each included job as digest_sent. Skips jobs already in digest.
 
     Args:
@@ -139,7 +173,11 @@ def send_digest(jobs: list[dict[str, Any]]) -> bool:
         logger.info("Digest skipped: no jobs to send")
         return True
     date_str = datetime.now().strftime("%Y-%m-%d")
-    lines = [f"📋 <b>Daily Job Digest — {date_str}</b>", f"{len(jobs)} matches above 75%\n"]
+    threshold_pct = int(config.config.get("DIGEST_THRESHOLD", 0.5) * 100)
+    lines = [
+        f"📋 <b>Daily Job Digest — {date_str}</b>",
+        f"{len(jobs)} matches at or above {threshold_pct}%\n",
+    ]
     for j in jobs:
         score_pct = (j.get("match_score") or 0) * 100
         title = (j.get("title") or "").replace("<", "&lt;").replace(">", "&gt;")
@@ -148,7 +186,7 @@ def send_digest(jobs: list[dict[str, Any]]) -> bool:
         lines.append(f"• {score_pct:.0f}% — {title} at {company}")
         lines.append(f"  {url}")
     text = "\n".join(lines)
-    success = _send_message(text)
+    success = _send_message(text, "digest")
     if success:
         for j in jobs:
             job_id = j.get("id")

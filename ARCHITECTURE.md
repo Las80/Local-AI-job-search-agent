@@ -54,7 +54,7 @@
 - **pipeline/hard_filter.py**: Applies blacklist, salary floor (£30k), UK-only location, required keywords (AI, Python, LLM, etc.), and seniority (reject senior/lead unless junior/associate).
 - **pipeline/scorer.py**: Keyword score (weight 0.3) + TF-IDF cosine similarity to candidate profile (weight 0.7). Output in [0, 1].
 - **pipeline/deduplicator.py**: SHA256 hash of URL; in-batch dedupe and DB check via `job_exists`.
-- **notifications/telegram.py**: Instant alert for 100% match (with cooldown), daily digest for 75%+ matches. Uses Telegram Bot API with HTML and 4096-char limit.
+- **notifications/telegram.py**: Instant alert for matches at or above the configured threshold (default 50%, with cooldown), daily digest for 50%+ matches. Uses Telegram Bot API with HTML and 4096-char limit.
 - **ui/app.py**: Flask on 127.0.0.1:5000. Routes: /, /blacklist, /blacklist/add, /blacklist/remove, /jobs, /health.
 - **scheduler.py**: APScheduler (BlockingScheduler). Pipeline job every 4 hours starting 6am; digest cron at 8am.
 
@@ -98,8 +98,8 @@
 
 ## Notification logic and thresholds
 
-- **Instant alert**: When a newly saved job has `match_score >= MATCH_THRESHOLD` (default 1.0). One message per job; same job not sent again within `NOTIFICATION_COOLDOWN_SECONDS` (default 3600). `notified` set to 1 and a row added to `notifications` with type `instant`.
-- **Digest**: Once per day at `DIGEST_TIME` (default 08:00). Select jobs with `match_score >= DIGEST_THRESHOLD` (default 0.75) and `digest_sent = 0`. Send one message listing them; then set `digest_sent = 1` and insert `notifications` with type `digest`.
+- **Instant alert**: When a newly saved job has `match_score >= MATCH_THRESHOLD` (default 0.5). One message per job; same job not sent again within `NOTIFICATION_COOLDOWN_SECONDS` (default 3600). `notified` set to 1 and a row added to `notifications` with type `instant`.
+- **Digest**: Once per day at `DIGEST_TIME` (default 08:00). Select jobs with `match_score >= DIGEST_THRESHOLD` (default 0.5) and `digest_sent = 0`. Send one message listing them; then set `digest_sent = 1` and insert `notifications` with type `digest`.
 
 ## Scheduling logic
 

@@ -34,6 +34,7 @@ def test_send_instant_alert_formats_correctly():
             "salary_min": 35000,
             "salary_max": 45000,
             "source": "reed",
+            "match_score": 1.0,
         }
         ok = telegram.send_instant_alert(job)
         if not ok:
@@ -41,7 +42,7 @@ def test_send_instant_alert_formats_correctly():
             return False
         call_args = telegram._send_message.call_args
         text = call_args[0][0]
-        if "100%" not in text or "AI Engineer" not in text or "Tech Co" not in text:
+        if "Match Found!" not in text or "AI Engineer" not in text or "Tech Co" not in text:
             print("send_instant_alert (format): FAIL — missing content")
             return False
         if "https://example.com/job/1" not in text or "reed" not in text:

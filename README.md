@@ -19,8 +19,8 @@ A fully local Python application that aggregates job listings from Adzuna, Reed,
 - **Scores** each job with a mix of keyword count and TF-IDF similarity to a candidate profile (junior/associate AI automation, LLM integration, prompt engineering).
 - **Stores** everything in a local SQLite database (`jobs.db`) and supports a **company blacklist** so you can hide recruiters or employers you don’t want to see.
 - **Notifies** via Telegram:
-  - **Instant alert** when a job scores 100% (configurable threshold).
-  - **Daily digest** at 8am for all jobs scoring 75% or above that haven’t been in a digest yet.
+  - **Instant alert** when a job scores at or above the configured threshold (default 50%).
+  - **Daily digest** at 8am for all jobs scoring 50% or above that haven’t been in a digest yet.
 - **Runs on a schedule** every 4 hours from 6am (6am, 10am, 2pm, 6pm, 10pm, 2am) using APScheduler.
 - **Web UI** on `http://localhost:5000` for managing the blacklist and viewing stored jobs.
 
@@ -80,8 +80,8 @@ A fully local Python application that aggregates job listings from Adzuna, Reed,
 
 ## Notifications
 
-- **Instant alert**: when a new job is saved with a match score at or above the configured threshold (default 100%), the agent sends one Telegram message with title, company, location, salary, and link. The same job is not re-sent within the cooldown window (default 1 hour).
-- **Daily digest**: every day at 8am (configurable via `DIGEST_TIME`), the agent sends one message listing all jobs with score ≥ 75% that have not yet been included in a digest, with score, title, company, and link.
+- **Instant alert**: when a new job is saved with a match score at or above the configured threshold (default 50%), the agent sends one Telegram message with title, company, location, salary, and link. The same job is not re-sent within the cooldown window (default 1 hour).
+- **Daily digest**: every day at 8am (configurable via `DIGEST_TIME`), the agent sends one message listing all jobs with score ≥ 50% that have not yet been included in a digest, with score, title, company, and link.
 
 ## Project structure
 
